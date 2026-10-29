@@ -9,10 +9,11 @@ from lms.views import (
     LessonListCreateView,
     LessonRetrieveUpdateDestroyView,
 )
-from users.views import UserRetrieveUpdateView
+from users.views import PaymentViewSet, UserRetrieveUpdateView
 
 router = DefaultRouter()
 router.register(r"courses", CourseViewSet, basename="course")
+router.register(r"payments", PaymentViewSet, basename="payment")
 
 urlpatterns = [
     path("admin/", admin.site.urls),

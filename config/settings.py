@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # Сторонние приложения
     "rest_framework",
+    "django_filters",
     # Локальные приложения
     "users",
     "lms",

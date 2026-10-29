@@ -5,8 +5,9 @@ Django REST Framework проект с кастомной моделью поль
 ## Стек
 
 - Python 3.10+
-- Django 4.2
-- Django REST Framework 3.14
+- Django 4.2+
+- Django REST Framework 3.14+
+- django-filter
 - Pillow (для ImageField)
 
 ## Установка
@@ -40,6 +41,15 @@ python manage.py runserver
 API доступно по адресу http://127.0.0.1:8000/api/
 
 Админка: http://127.0.0.1:8000/admin/
+
+# 7. Загрузить тестовые платежи (одно из двух)
+python manage.py loaddata payments
+### или, если фикстура не подходит по ID:
+python manage.py load_payments
+
+> ⚠️ Фикстура `payments.json` ссылается на конкретные ID пользователей, курсов и уроков.
+> Если в вашей БД этих ID нет — используйте команду `load_payments`, она подставит
+> случайные существующие объекты.
 ```
 
 ## Эндпоинты
@@ -50,7 +60,28 @@ GET/PUT/PATCH/DELETE	/api/courses/{id}/	Детали / обновление / у
 GET/POST	        /api/lessons/	        Список / создание уроков
 GET/PUT/PATCH/DELETE	/api/lessons/{id}/	Детали / обновление / удаление урока
 GET/PUT/PATCH	        /api/users/{id}/	Просмотр / редактирование профиля (доп. задание)
+GET/POST/PUT/DELETE     /api/payments/          CRUD по платежам + фильтрация
 ```
+
+## Особенности сериализаторов
+CourseSerializer возвращает lessons_count (количество уроков) и lessons
+(вложенный список уроков через LessonSerializer).
+
+UserSerializer возвращает payments — историю платежей пользователя
+(дополнительное задание).
+
+## Фильтрация и сортировка платежей
+
+- `?ordering=payment_date` — по дате оплаты (по возрастанию)
+- `?ordering=-payment_date` — по дате оплаты (по убыванию)
+- `?course=<id>` — только платежи за указанный курс
+- `?lesson=<id>` — только платежи за указанный урок
+- `?payment_method=cash` — только наличные
+- `?payment_method=transfer` — только переводы на счёт
+
+Примеры:
+- `/api/payments/?course=1&payment_method=transfer`
+- `/api/payments/?ordering=-payment_date`
 
 ## Тестирование
 
@@ -75,3 +106,4 @@ video_link — URL
 preview — тип File, выбрать картинку
 ```
 Для загрузки изображений (avatar, preview) используйте form-data с типом поля File.
+
