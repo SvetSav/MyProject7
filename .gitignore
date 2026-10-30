@@ -12,3 +12,4 @@ media/
 .DS_Store
 *.pyc
 pycache/
+login.ps1
