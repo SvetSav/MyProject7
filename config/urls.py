@@ -12,6 +12,7 @@ from lms.views import (
     LessonListAPIView,
     LessonRetrieveAPIView,
     LessonUpdateAPIView,
+    SubscriptionAPIView,
 )
 from users.views import PaymentViewSet, UserViewSet
 
@@ -42,6 +43,7 @@ urlpatterns = [
         LessonDestroyAPIView.as_view(),
         name="lesson-delete",
     ),
+    path("api/subscribe/", SubscriptionAPIView.as_view(), name="subscribe"),
 ]
 
 # Для раздачи медиафайлов в режиме разработки

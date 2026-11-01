@@ -17,6 +17,9 @@ class Course(models.Model):
     )
     description = models.TextField(blank=True, verbose_name="Описание")
 
+    class Meta:
+        ordering = ["id"]
+
     def __str__(self):
         return self.title
 
@@ -40,5 +43,37 @@ class Lesson(models.Model):
     )
     video_link = models.URLField(blank=True, verbose_name="Ссылка на видео")
 
+    class Meta:
+        ordering = ["id"]
+
     def __str__(self):
         return f"{self.course.title} - {self.title}"
+
+
+class Subscription(models.Model):
+    user = models.ForeignKey(
+        "users.User",
+        on_delete=models.CASCADE,
+        related_name="subscriptions",
+        verbose_name="Пользователь",
+    )
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name="subscriptions",
+        verbose_name="Курс",
+    )
+
+    class Meta:
+        verbose_name = "Подписка"
+        verbose_name_plural = "Подписки"
+        # Уникальность пары (пользователь, курс) — гарантирует БД
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "course"],
+                name="unique_user_course_subscription",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} → {self.course.title}"

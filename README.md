@@ -133,3 +133,28 @@ Body: { "refresh": "..." }
 POST /api/users/
 Body: { "email", "password", "first_name", "phone", "city" }
 Доступна без токена.
+
+## Подписки
+
+- `POST /api/subscribe/` — подписаться или отписаться (toggle).
+  Body: `{"course_id": <id>}`. Возвращает `{"message": "...", "is_subscribed": bool}`.
+- Поле `is_subscribed` в `GET /api/courses/{id}/` показывает подписку текущего пользователя.
+
+## Пагинация
+
+- `/api/courses/?page=2&page_size=5` — 5 курсов на страницу, страница 2.
+- `/api/lessons/?page=1&page_size=10` — 10 уроков на страницу.
+- По умолчанию: курсы — 10, уроки — 5.
+
+## Валидация
+
+- `video_link` в уроках допускает только ссылки на `youtube.com` и `youtu.be`.
+- Ссылки на другие домены отклоняются с ошибкой 400.
+
+## Тесты
+
+```
+python manage.py test lms -v 2
+coverage run --source='.' manage.py test lms
+coverage report > coverage.txt
+```
