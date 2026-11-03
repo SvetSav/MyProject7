@@ -7,6 +7,11 @@ class PaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payment
         fields = "__all__"
+        read_only_fields = (
+            'id', 'user', 'payment_date',
+            'stripe_product_id', 'stripe_price_id',
+            'stripe_session_id', 'payment_link', 'payment_status',
+        )
 
     def create(self, validated_data):
         password = validated_data.pop("password")
@@ -24,6 +29,23 @@ class PaymentSerializer(serializers.ModelSerializer):
         instance.save()
         return instance
 
+class PaymentCreateSerializer(serializers.Serializer):
+    course_id = serializers.IntegerField(help_text='ID оплачиваемого курса')
+    amount = serializers.DecimalField(
+        max_digits=10, decimal_places=2, min_value=1,
+        help_text='Сумма в рублях (минимум 1.00)',
+    )
+    payment_method = serializers.ChoiceField(
+        choices=['cash', 'transfer'],
+        default='transfer',
+        help_text='Способ оплаты',
+    )
+
+    def validate_course_id(self, value):
+        from lms.models import Course
+        if not Course.objects.filter(id=value).exists():
+            raise serializers.ValidationError('Курс с таким ID не найден.')
+        return value
 
 # Для регистрации
 class UserCreateSerializer(serializers.ModelSerializer):

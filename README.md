@@ -7,8 +7,13 @@ Django REST Framework проект с кастомной моделью поль
 - Python 3.10+
 - Django 4.2+
 - Django REST Framework 3.14+
+- djangorestframework-simplejwt
+- drf-spectacular (документация OpenAPI 3.0)
+- drf-spectacular-sidecar (локальные UI без CDN)
 - django-filter
-- Pillow (для ImageField)
+- stripe (интеграция оплаты)
+- Pillow
+- coverage
 
 ## Установка
 
@@ -55,12 +60,14 @@ python manage.py load_payments
 ## Эндпоинты
 ```
 Метод	                     URL	                    Описание
-GET/POST	        /api/courses/	        Список / создание курсов
-GET/PUT/PATCH/DELETE	/api/courses/{id}/	Детали / обновление / удаление курса
-GET/POST	        /api/lessons/	        Список / создание уроков
-GET/PUT/PATCH/DELETE	/api/lessons/{id}/	Детали / обновление / удаление урока
-GET/PUT/PATCH	        /api/users/{id}/	Просмотр / редактирование профиля (доп. задание)
-GET/POST/PUT/DELETE     /api/payments/          CRUD по платежам + фильтрация
+GET/POST	        /api/courses/	                  Список / создание курсов
+GET/PUT/PATCH/DELETE	/api/courses/{id}/	          Детали / обновление / удаление курса
+GET/POST	        /api/lessons/	                  Список / создание уроков
+GET/PUT/PATCH/DELETE	/api/lessons/{id}/	          Детали / обновление / удаление урока
+GET/PUT/PATCH	        /api/users/{id}/	          Просмотр / редактирование профиля (доп. задание)
+GET/POST/PUT/DELETE     /api/payments/                    CRUD по платежам + фильтрация
+POST	                /api/payments/create/	          Создаёт продукт, цену и сессию Stripe, сохраняет платёж, возвращает payment_url
+GET	                /api/payments/status/{session_id}/ Проверяет и синхронизирует статус сессии (доп. задание)
 ```
 
 ## Особенности сериализаторов
@@ -158,3 +165,81 @@ python manage.py test lms -v 2
 coverage run --source='.' manage.py test lms
 coverage report > coverage.txt
 ```
+
+## Документация API
+
+Проект использует **drf-spectacular** для генерации OpenAPI 3.0-схемы.
+
+| Что | URL |
+|-----|-----|
+| Swagger UI (интерактивный) | `/api/docs/` |
+| ReDoc (для чтения) | `/api/redoc/` |
+| Схема OpenAPI (JSON/YAML) | `/api/schema/` |
+
+### Генерация и валидация схемы
+
+```
+# Проверить схему на ошибки и предупреждения
+python manage.py spectacular --color --file schema.yaml --validate
+
+# Или без записи в файл
+python manage.py spectacular --validate
+```
+
+Схема генерируется без warnings и errors. 
+Если появились warnings — смотрите @extend_schema_field в lms/serializers.py и 
+@extend_schema_view в lms/views.py / users/views.py.
+
+
+## Локальные UI (без CDN)
+Так как cdn.jsdelivr.net и cdn.redoc.ly могут быть недоступны из некоторых регионов, 
+в проекте включён sidecar-режим — все JS/CSS-ресурсы Swagger UI и ReDoc отдаются локально через Django:
+
+```
+SPECTACULAR_SETTINGS = {
+    ...
+    'SWAGGER_UI_DIST': 'SIDECAR',
+    'SWAGGER_UI_FAVICON_HREF': 'SIDECAR',
+    'REDOC_DIST': 'SIDECAR',
+}
+```
+
+Документация работает без доступа к интернету.
+
+## Оплата через Stripe
+
+### Режимы работы
+
+Проект поддерживает **два режима** интеграции Stripe, управляемых переменной `STRIPE_MOCK`:
+
+| Режим | `STRIPE_MOCK` | Что происходит |
+|-------|---------------|----------------|
+| Mock (по умолчанию) | `true` | Запросы к Stripe эмулируются. Создаются `prod_...`, `price_...`, `cs_test_...` локально. `payment_url` ведёт на локальную заглушку. Все поля сохраняются. Позволяет проверить всю логику без реального ключа. |
+| Real | `false` | Реальные запросы к Stripe API. Требует настоящий `sk_test_51...`. Возвращает реальный `checkout.stripe.com` URL. |
+
+### Настройка
+
+```
+# Mock (без ключа)
+$env:STRIPE_MOCK = "true"
+
+# Real
+$env:STRIPE_SECRET_KEY = "sk_test_51..."
+$env:STRIPE_MOCK = "false"
+```
+
+#### Пример запроса
+
+body = '{"course_id":1,"amount":1500,"payment_method":"transfer"}'
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/payments/create/" -Method Post `
+  -Headers @{ Authorization = "Bearer $adminToken" } `
+  -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) `
+  -ContentType "application/json; charset=utf-8"
+
+Ответ: payment (со всеми stripe_* полями) + payment_url.
+
+### Важно
+Цена передаётся в копейках (amount × 100).
+Все ID (stripe_product_id, stripe_price_id, stripe_session_id) и payment_link сохраняются в модели Payment.
+Ошибки Stripe → 502 Bad Gateway с понятным сообщением.
+В mock-режиме payment_url ведёт на /api/payments/success/?mock_session=... — это эмуляция успешной оплаты для проверки логики.

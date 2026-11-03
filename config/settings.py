@@ -41,6 +41,8 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # Сторонние приложения
     "rest_framework",
+    "drf_spectacular",
+    "drf_spectacular_sidecar",
     "django_filters",
     # Локальные приложения
     "users",
@@ -156,6 +158,7 @@ REST_FRAMEWORK = {
         "rest_framework.renderers.JSONRenderer",
         "rest_framework.renderers.BrowsableAPIRenderer",
     ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     # Ключевая настройка — добавить charset=utf-8
     "UNICODE_JSON": True,
     "COMPACT_JSON": False,
@@ -166,3 +169,21 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'LMS API',
+    'DESCRIPTION': 'API для управления курсами, уроками, платежами и подписками',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+
+    # Эти три строки включают локальные файлы вместо CDN
+    'SWAGGER_UI_DIST': 'SIDECAR',
+    'SWAGGER_UI_FAVICON_HREF': 'SIDECAR',
+    'REDOC_DIST': 'SIDECAR',
+}
+
+STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', 'sk_test_ваш_ключ')
+STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY', '')
+# true — использовать mock-режим (без запросов к Stripe);
+# false — реальный Stripe (требует настоящий sk_test_51...)
+STRIPE_MOCK = os.environ.get('STRIPE_MOCK', 'true').lower() == 'true'

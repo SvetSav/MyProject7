@@ -13,3 +13,5 @@ media/
 *.pyc
 pycache/
 login.ps1
+.coverage
+htmlcov/
