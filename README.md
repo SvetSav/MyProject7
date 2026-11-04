@@ -5,13 +5,16 @@ Django REST Framework проект с кастомной моделью поль
 ## Стек
 
 - Python 3.10+
-- Django 4.2+
-- Django REST Framework 3.14+
+- Django 6.0+
+- Django REST Framework 3.18+
 - djangorestframework-simplejwt
-- drf-spectacular (документация OpenAPI 3.0)
-- drf-spectacular-sidecar (локальные UI без CDN)
+- drf-spectacular + drf-spectacular-sidecar
 - django-filter
-- stripe (интеграция оплаты)
+- **Celery 5.6+** (фоновые задачи)
+- **Celery Beat + django-celery-beat** (периодические задачи)
+- **Redis 7** (брокер и result backend)
+- **django-environ** (переменные окружения)
+- stripe (mock-режим)
 - Pillow
 - coverage
 
@@ -26,19 +29,26 @@ cd <папка_проекта>
 python -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
 
+Настройки окружения
+cp .env.example .env       # Windows: copy .env.example .env
+# Отредактируйте .env: SECRET_KEY, CELERY_*, EMAIL_*
+
 # 3. Установить зависимости
 pip install -r requirements.txt
 
-# 4. Применить миграции
+# 4. Redis (Docker)
+docker run -d --name redis -p 6379:6379 redis:7
+
+# 5. Применить миграции
 python manage.py migrate
 # Если в репозитории нет готовых миграций, сначала выполните:
 # python manage.py makemigrations users lms
 
-# 5. Создать суперпользователя
+# 6. Создать суперпользователя
 #    Внимание: в качестве логина используется EMAIL, а не username.
 python manage.py createsuperuser
 
-# 6. Запустить сервер
+# 7. Запустить сервер
 python manage.py runserver
 
 После запуска:
@@ -47,7 +57,7 @@ API доступно по адресу http://127.0.0.1:8000/api/
 
 Админка: http://127.0.0.1:8000/admin/
 
-# 7. Загрузить тестовые платежи (одно из двух)
+# 8. Загрузить тестовые платежи (одно из двух)
 python manage.py loaddata payments
 ### или, если фикстура не подходит по ID:
 python manage.py load_payments
@@ -55,6 +65,16 @@ python manage.py load_payments
 > ⚠️ Фикстура `payments.json` ссылается на конкретные ID пользователей, курсов и уроков.
 > Если в вашей БД этих ID нет — используйте команду `load_payments`, она подставит
 > случайные существующие объекты.
+
+# 9. Три окна:
+# Окно 1 — Django
+python manage.py runserver
+
+# Окно 2 — Worker
+celery -A config worker -l info -P solo
+
+# Окно 3 — Beat (опционально, для периодических задач)
+celery -A config beat -l info
 ```
 
 ## Эндпоинты
@@ -243,3 +263,216 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/payments/create/" -Method Post
 Все ID (stripe_product_id, stripe_price_id, stripe_session_id) и payment_link сохраняются в модели Payment.
 Ошибки Stripe → 502 Bad Gateway с понятным сообщением.
 В mock-режиме payment_url ведёт на /api/payments/success/?mock_session=... — это эмуляция успешной оплаты для проверки логики.
+
+## Celery и фоновые задачи
+
+Проект использует **Celery** для асинхронной обработки задач и **Celery Beat**
+для периодических задач. В качестве брокера и хранилища результатов используется **Redis**.
+
+### Архитектура
+
+Django (API) ──► Redis (broker) ──► Celery Worker ──► Redis (result backend)
+▲
+│
+Celery Beat (расписание)
+
+### Реализованные задачи
+
+| Задача | Модуль | Тип | Описание |
+|--------|--------|-----|----------|
+| `send_course_update_notification` | `lms.tasks` | событийная | Отправляет email подписчикам курса при его обновлении |
+| `deactivate_inactive_users` | `users.tasks` | периодическая | Блокирует пользователей, не заходивших > 30 дней |
+
+### Настройка Redis через `.env`
+
+Настройки Redis вынесены в переменные окружения (`.env`):
+
+```
+CELERY_BROKER_URL=redis://127.0.0.1:6379/0
+CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/1
+```
+
+⚠️ Важно: используйте 127.0.0.1, а не localhost — на Windows localhost
+резолвится в IPv6 (::1), и Celery может не найти Docker-контейнер с Redis.
+
+Пример .env.example — в корне репозитория. Скопируйте в .env и заполните своими значениями:
+
+```
+cp .env.example .env
+```
+### Запуск Redis
+Проект рассчитан на Redis 7, запущенный локально на порту 6379. Проще всего — через Docker:
+
+```
+docker run -d --name redis -p 6379:6379 redis:7
+```
+
+Проверка:
+
+```
+docker exec -it redis redis-cli ping
+```
+#### Ожидаемо: PONG
+
+⚠️ Redis 3.x (из winget) не подойдёт — он не поддерживает протокол RESP3
+и команду HELLO, из-за чего Celery 5.6+ падает с ошибкой
+unknown command 'HELLO'. Нужен Redis 6.0+.
+
+### Запуск Celery
+Понадобятся три отдельных окна PowerShell (все — с активированным venv, в папке проекта):
+
+Окно 1 — Django-сервер
+```
+cd C:\Users\Honest\Desktop\MyProject7
+.\.venv\Scripts\Activate.ps1
+python manage.py runserver
+```
+
+Окно 2 — Celery Worker
+```
+cd C:\Users\Honest\Desktop\MyProject7
+.\.venv\Scripts\Activate.ps1
+celery -A config worker -l info -P solo
+```
+⚠️ Флаг -P solo обязателен на Windows — стандартный пул prefork
+использует fork(), которого нет в Windows.
+
+Ожидаемый вывод:
+```
+[tasks]
+  . lms.tasks.send_course_update_notification
+  . users.tasks.deactivate_inactive_users
+[INFO/MainProcess] celery@... ready.
+```
+
+Окно 3 — Celery Beat (планировщик)
+```
+cd C:\Users\Honest\Desktop\MyProject7
+.\.venv\Scripts\Activate.ps1
+celery -A config beat -l info
+```
+
+Ожидаемый вывод:
+```
+beat: Starting...
+DatabaseScheduler: Schedule changed.
+```
+
+### Расписание периодических задач
+Так как используется DatabaseScheduler (из django-celery-beat), расписание
+хранится в БД и управляется через админку:
+
+http://127.0.0.1:8000/admin/django_celery_beat/periodictask/
+
+Пример задачи:
+
+| Поле                              | Значение      |
+|-----------------------------------|---------------|
+| Name | deactivate-inactive-users   |
+| Task     | users.tasks.deactivate_inactive_users |
+|      Schedule    |                 Crontab: hour=3, minute=0 (ежедневно в 03:00)                      |
+|          Enabled        |           ✅                                                                         |
+
+
+⚠️ Задачи из CELERY_BEAT_SCHEDULE в settings.py не подхватываются —
+DatabaseScheduler читает расписание только из БД.
+
+#### Таймзона
+CELERY_TIMEZONE обязательно должен совпадать с TIME_ZONE в Django,
+иначе задачи будут запускаться не в то время:
+
+```
+# config/settings.py
+CELERY_TIMEZONE = TIME_ZONE
+```
+
+Проверка:
+```
+python manage.py shell -c "from django.conf import settings; print(settings.TIME_ZONE, settings.CELERY_TIMEZONE, settings.TIME_ZONE == settings.CELERY_TIMEZONE)"
+```
+#### Ожидаемо: UTC UTC True
+
+### Логика уведомлений (доп. задание: < 4 часов)
+При обновлении курса уведомление отправляется подписчикам только если
+курс не обновлялся более 4 часов. Реализовано в CourseViewSet.perform_update:
+
+```
+def perform_update(self, serializer):
+    old_updated_at = serializer.instance.updated_at   # до save()
+    course = serializer.save()
+
+    threshold = timezone.now() - timedelta(hours=4)
+    if old_updated_at is None or old_updated_at < threshold:
+        send_course_update_notification.delay(course.id, course.title)
+```
+
+### Email в режиме разработки
+Для тестирования без реального SMTP включён console.EmailBackend —
+письма печатаются в консоли Worker-а, а не отправляются:
+
+```
+# config/settings.py
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+```
+Для реальной отправки — настройте SMTP в .env (см. .env.example) и переключите
+EMAIL_BACKEND на smtp.EmailBackend. Для Yandex/Gmail нужен пароль приложения,
+а не обычный пароль от почты.
+
+Проверка задач
+
+Ручной вызов задачи блокировки:
+
+```
+python manage.py shell -c "from users.tasks import deactivate_inactive_users; print(deactivate_inactive_users.delay().get(timeout=30))"
+```
+# Ожидаемо: "Заблокировано пользователей: N"
+
+Проверка email-уведомления:
+
+Обновите курс через API (PATCH /api/courses/1/).
+
+В окне Worker появится:
+
+```
+Task lms.tasks.send_course_update_notification[...] received
+Task ... succeeded in 0.05s: Письма отправлены: N получателей
+Текст письма будет напечатан в консоли (при console.EmailBackend).
+```
+
+## Переменные окружения
+
+Настройки читаются из `.env` через `django-environ`. Шаблон — в `.env.example`.
+
+| Переменная | Обязательна | Описание |
+|-----------|-------------|----------|
+| `SECRET_KEY` | Да | Секретный ключ Django |
+| `DEBUG` | Да | `True` / `False` |
+| `CELERY_BROKER_URL` | Да | URL брокера Redis (например, `redis://127.0.0.1:6379/0`) |
+| `CELERY_RESULT_BACKEND` | Да | URL result backend (`redis://127.0.0.1:6379/1`) |
+| `EMAIL_BACKEND` | Нет | По умолчанию `console`; для отправки — `smtp.EmailBackend` |
+| `EMAIL_HOST` | Для SMTP | SMTP-хост (`smtp.yandex.ru`, `smtp.gmail.com`) |
+| `EMAIL_PORT` | Для SMTP | `587` (TLS) или `465` (SSL) |
+| `EMAIL_HOST_USER` | Для SMTP | Email-адрес |
+| `EMAIL_HOST_PASSWORD` | Для SMTP | **Пароль приложения** (не обычный пароль) |
+| `STRIPE_SECRET_KEY` | Для Stripe | `sk_test_51...` или пусто (mock-режим) |
+| `STRIPE_MOCK` | Нет | `true` (по умолчанию) / `false` |
+
+Пример `.env.example`:
+
+```
+SECRET_KEY=django-insecure-change-me
+DEBUG=True
+
+CELERY_BROKER_URL=redis://127.0.0.1:6379/0
+CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/1
+
+EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
+# EMAIL_HOST=smtp.yandex.ru
+# EMAIL_PORT=587
+# EMAIL_USE_TLS=True
+# EMAIL_HOST_USER=your_email@yandex.ru
+# EMAIL_HOST_PASSWORD=your_app_password
+
+STRIPE_SECRET_KEY=
+STRIPE_MOCK=true
+```

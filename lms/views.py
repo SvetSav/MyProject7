@@ -1,5 +1,17 @@
+from datetime import timedelta
+
 from django.shortcuts import get_object_or_404
-from rest_framework import generics, status, viewsets
+from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import (
+    OpenApiExample,
+    OpenApiParameter,
+    OpenApiResponse,
+    extend_schema,
+    extend_schema_view,
+    inline_serializer,
+)
+from rest_framework import generics, serializers, status, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -9,41 +21,35 @@ from users.permissions import IsNotModerator, IsOwner, IsOwnerOrModerator
 from .models import Course, Lesson, Subscription
 from .paginators import CoursePaginator, LessonPaginator
 from .serializers import CourseSerializer, LessonSerializer
-
-from drf_spectacular.utils import (
-    extend_schema,
-    extend_schema_view,
-    OpenApiParameter,
-    OpenApiResponse,
-    OpenApiExample,
-    inline_serializer,
-)
-from drf_spectacular.types import OpenApiTypes
-from rest_framework import serializers
+from .tasks import send_course_update_notification
 
 
 @extend_schema_view(
     list=extend_schema(
-        summary='Список курсов',
-        description='Возвращает пагинированный список курсов. '
-                    'Модераторы видят все курсы, обычные пользователи — только свои.',
+        summary="Список курсов",
+        description="Возвращает пагинированный список курсов. "
+        "Модераторы видят все курсы, обычные пользователи — только свои.",
         parameters=[
             OpenApiParameter(
-                name='page', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY,
-                description='Номер страницы',
+                name="page",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description="Номер страницы",
             ),
             OpenApiParameter(
-                name='page_size', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY,
-                description='Количество элементов на странице (макс. 50)',
+                name="page_size",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description="Количество элементов на странице (макс. 50)",
             ),
         ],
-        tags=['Курсы'],
+        tags=["Курсы"],
     ),
-    retrieve=extend_schema(summary='Получить курс', tags=['Курсы']),
-    create=extend_schema(summary='Создать курс', tags=['Курсы']),
-    update=extend_schema(summary='Обновить курс', tags=['Курсы']),
-    partial_update=extend_schema(summary='Частично обновить курс', tags=['Курсы']),
-    destroy=extend_schema(summary='Удалить курс', tags=['Курсы']),
+    retrieve=extend_schema(summary="Получить курс", tags=["Курсы"]),
+    create=extend_schema(summary="Создать курс", tags=["Курсы"]),
+    update=extend_schema(summary="Обновить курс", tags=["Курсы"]),
+    partial_update=extend_schema(summary="Частично обновить курс", tags=["Курсы"]),
+    destroy=extend_schema(summary="Удалить курс", tags=["Курсы"]),
 )
 # ViewSet
 class CourseViewSet(viewsets.ModelViewSet):
@@ -73,32 +79,41 @@ class CourseViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
 
+    def perform_update(self, serializer):
+        old_updated_at = serializer.instance.updated_at  # ← ДО save()
+        course = serializer.save()
+
+        threshold = timezone.now() - timedelta(hours=4)
+        if old_updated_at is None or old_updated_at < threshold:
+            send_course_update_notification.delay(course.id, course.title)
+
 
 @extend_schema(
-    summary='Список уроков',
+    summary="Список уроков",
     description=(
-        'Возвращает пагинированный список уроков. '
-        'Модераторы видят все уроки, обычные пользователи — только свои.'
+        "Возвращает пагинированный список уроков. "
+        "Модераторы видят все уроки, обычные пользователи — только свои."
     ),
     parameters=[
         OpenApiParameter(
-            name='page', type=OpenApiTypes.INT,
+            name="page",
+            type=OpenApiTypes.INT,
             location=OpenApiParameter.QUERY,
-            description='Номер страницы.',
+            description="Номер страницы.",
         ),
         OpenApiParameter(
-            name='page_size', type=OpenApiTypes.INT,
+            name="page_size",
+            type=OpenApiTypes.INT,
             location=OpenApiParameter.QUERY,
-            description='Количество элементов на странице (макс. 20).',
+            description="Количество элементов на странице (макс. 20).",
         ),
     ],
     responses={
         200: LessonSerializer(many=True),
-        401: OpenApiResponse(description='Требуется авторизация (JWT).'),
+        401: OpenApiResponse(description="Требуется авторизация (JWT)."),
     },
-    tags=['Уроки'],
+    tags=["Уроки"],
 )
-
 # Generic-классы
 class LessonListAPIView(generics.ListAPIView):
     serializer_class = LessonSerializer
@@ -113,36 +128,35 @@ class LessonListAPIView(generics.ListAPIView):
 
 
 @extend_schema(
-    summary='Создать урок',
+    summary="Создать урок",
     description=(
-        'Создаёт новый урок. Владелец (`owner`) автоматически привязывается к текущему '
-        'пользователю. Модераторы не могут создавать уроки — только обычные пользователи. '
-        'Поле `video_link` принимает только ссылки на `youtube.com` и `youtu.be`.'
+        "Создаёт новый урок. Владелец (`owner`) автоматически привязывается к текущему "
+        "пользователю. Модераторы не могут создавать уроки — только обычные пользователи. "
+        "Поле `video_link` принимает только ссылки на `youtube.com` и `youtu.be`."
     ),
     request=LessonSerializer,
     responses={
         201: LessonSerializer,
         400: OpenApiResponse(
-            description='Некорректные данные (например, не-YouTube ссылка в `video_link`).',
+            description="Некорректные данные (например, не-YouTube ссылка в `video_link`).",
         ),
-        401: OpenApiResponse(description='Требуется авторизация (JWT).'),
-        403: OpenApiResponse(description='Модератор не может создавать уроки.'),
+        401: OpenApiResponse(description="Требуется авторизация (JWT)."),
+        403: OpenApiResponse(description="Модератор не может создавать уроки."),
     },
     examples=[
         OpenApiExample(
-            'Корректный запрос',
+            "Корректный запрос",
             request_only=True,
             value={
-                'course': 1,
-                'title': 'Введение в Python',
-                'description': 'Первый урок курса',
-                'video_link': 'https://youtube.com/watch?v=abc123',
+                "course": 1,
+                "title": "Введение в Python",
+                "description": "Первый урок курса",
+                "video_link": "https://youtube.com/watch?v=abc123",
             },
         ),
     ],
-    tags=['Уроки'],
+    tags=["Уроки"],
 )
-
 class LessonCreateAPIView(generics.CreateAPIView):
     serializer_class = LessonSerializer
     permission_classes = [IsAuthenticated, IsNotModerator]
@@ -152,20 +166,18 @@ class LessonCreateAPIView(generics.CreateAPIView):
 
 
 @extend_schema(
-    summary='Получить урок',
+    summary="Получить урок",
     description=(
-        'Возвращает детальную информацию об уроке. '
-        'Доступно владельцу и модераторам.'
+        "Возвращает детальную информацию об уроке. " "Доступно владельцу и модераторам."
     ),
     responses={
         200: LessonSerializer,
-        401: OpenApiResponse(description='Требуется авторизация (JWT).'),
-        403: OpenApiResponse(description='Нет прав на просмотр чужого урока.'),
-        404: OpenApiResponse(description='Урок не найден.'),
+        401: OpenApiResponse(description="Требуется авторизация (JWT)."),
+        403: OpenApiResponse(description="Нет прав на просмотр чужого урока."),
+        404: OpenApiResponse(description="Урок не найден."),
     },
-    tags=['Уроки'],
+    tags=["Уроки"],
 )
-
 class LessonRetrieveAPIView(generics.RetrieveAPIView):
     queryset = Lesson.objects.all()
     serializer_class = LessonSerializer
@@ -173,22 +185,21 @@ class LessonRetrieveAPIView(generics.RetrieveAPIView):
 
 
 @extend_schema(
-    summary='Обновить урок',
+    summary="Обновить урок",
     description=(
-        'Обновляет урок. Владелец может редактировать свои уроки, '
-        'модератор — любые. Поле `video_link` принимает только `youtube.com` и `youtu.be`.'
+        "Обновляет урок. Владелец может редактировать свои уроки, "
+        "модератор — любые. Поле `video_link` принимает только `youtube.com` и `youtu.be`."
     ),
     request=LessonSerializer,
     responses={
         200: LessonSerializer,
-        400: OpenApiResponse(description='Некорректные данные.'),
-        401: OpenApiResponse(description='Требуется авторизация (JWT).'),
-        403: OpenApiResponse(description='Нет прав на редактирование чужого урока.'),
-        404: OpenApiResponse(description='Урок не найден.'),
+        400: OpenApiResponse(description="Некорректные данные."),
+        401: OpenApiResponse(description="Требуется авторизация (JWT)."),
+        403: OpenApiResponse(description="Нет прав на редактирование чужого урока."),
+        404: OpenApiResponse(description="Урок не найден."),
     },
-    tags=['Уроки'],
+    tags=["Уроки"],
 )
-
 class LessonUpdateAPIView(generics.UpdateAPIView):
     queryset = Lesson.objects.all()
     serializer_class = LessonSerializer
@@ -196,21 +207,22 @@ class LessonUpdateAPIView(generics.UpdateAPIView):
 
 
 @extend_schema(
-    summary='Удалить урок',
+    summary="Удалить урок",
     description=(
-        'Удаляет урок. Владелец может удалить свой урок, '
-        'модератор — **не может** (по требованиям ТЗ).'
+        "Удаляет урок. Владелец может удалить свой урок, "
+        "модератор — **не может** (по требованиям ТЗ)."
     ),
     responses={
-        204: OpenApiResponse(description='Урок удалён.'),
-        401: OpenApiResponse(description='Требуется авторизация (JWT).'),
-        403: OpenApiResponse(description='Модератор не может удалять уроки, '
-                                         'или пользователь не является владельцем.'),
-        404: OpenApiResponse(description='Урок не найден.'),
+        204: OpenApiResponse(description="Урок удалён."),
+        401: OpenApiResponse(description="Требуется авторизация (JWT)."),
+        403: OpenApiResponse(
+            description="Модератор не может удалять уроки, "
+            "или пользователь не является владельцем."
+        ),
+        404: OpenApiResponse(description="Урок не найден."),
     },
-    tags=['Уроки'],
+    tags=["Уроки"],
 )
-
 class LessonDestroyAPIView(generics.DestroyAPIView):
     queryset = Lesson.objects.all()
     serializer_class = LessonSerializer
@@ -219,69 +231,68 @@ class LessonDestroyAPIView(generics.DestroyAPIView):
 
 @extend_schema_view(
     post=extend_schema(
-        summary='Подписаться / отписаться от курса',
+        summary="Подписаться / отписаться от курса",
         description=(
-            'Toggle-эндпоинт для управления подпиской на обновления курса. '
-            'Если пользователь ещё не подписан — создаёт подписку. '
-            'Если уже подписан — удаляет её. '
-            'Используется метод POST, потому что операция меняет состояние.'
+            "Toggle-эндпоинт для управления подпиской на обновления курса. "
+            "Если пользователь ещё не подписан — создаёт подписку. "
+            "Если уже подписан — удаляет её. "
+            "Используется метод POST, потому что операция меняет состояние."
         ),
         request=inline_serializer(
-            name='SubscriptionRequest',
+            name="SubscriptionRequest",
             fields={
-                'course_id': serializers.IntegerField(
-                    help_text='ID курса, на который оформляется подписка.',
+                "course_id": serializers.IntegerField(
+                    help_text="ID курса, на который оформляется подписка.",
                 ),
             },
         ),
         responses={
             200: OpenApiResponse(
-                description='Подписка создана или удалена.',
+                description="Подписка создана или удалена.",
                 response=inline_serializer(
-                    name='SubscriptionResponse',
+                    name="SubscriptionResponse",
                     fields={
-                        'message': serializers.CharField(
-                            help_text='«подписка добавлена» или «подписка удалена».',
+                        "message": serializers.CharField(
+                            help_text="«подписка добавлена» или «подписка удалена».",
                         ),
-                        'is_subscribed': serializers.BooleanField(
-                            help_text='Текущее состояние подписки после операции.',
+                        "is_subscribed": serializers.BooleanField(
+                            help_text="Текущее состояние подписки после операции.",
                         ),
                     },
                 ),
                 examples=[
                     OpenApiExample(
-                        'Подписка добавлена',
-                        value={'message': 'подписка добавлена', 'is_subscribed': True},
+                        "Подписка добавлена",
+                        value={"message": "подписка добавлена", "is_subscribed": True},
                         response_only=True,
                     ),
                     OpenApiExample(
-                        'Подписка удалена',
-                        value={'message': 'подписка удалена', 'is_subscribed': False},
+                        "Подписка удалена",
+                        value={"message": "подписка удалена", "is_subscribed": False},
                         response_only=True,
                     ),
                 ],
             ),
             400: OpenApiResponse(
-                description='Не передан `course_id` или некорректный формат.',
+                description="Не передан `course_id` или некорректный формат.",
                 response=inline_serializer(
-                    name='SubscriptionError',
-                    fields={'error': serializers.CharField()},
+                    name="SubscriptionError",
+                    fields={"error": serializers.CharField()},
                 ),
                 examples=[
                     OpenApiExample(
-                        'course_id отсутствует',
-                        value={'error': 'Не указан course_id'},
+                        "course_id отсутствует",
+                        value={"error": "Не указан course_id"},
                         response_only=True,
                     ),
                 ],
             ),
-            401: OpenApiResponse(description='Требуется авторизация (JWT).'),
-            404: OpenApiResponse(description='Курс с указанным ID не найден.'),
+            401: OpenApiResponse(description="Требуется авторизация (JWT)."),
+            404: OpenApiResponse(description="Курс с указанным ID не найден."),
         },
-        tags=['Подписки'],
+        tags=["Подписки"],
     ),
 )
-
 class SubscriptionAPIView(APIView):
     """Toggle-подписка: POST /api/subscribe/ с body {"course_id": <id>}"""
 

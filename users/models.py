@@ -93,16 +93,21 @@ class Payment(models.Model):
     )
 
     # новые поля для Stripe
-    stripe_product_id = models.CharField(max_length=255, blank=True,
-                                          verbose_name='ID продукта Stripe')
-    stripe_price_id = models.CharField(max_length=255, blank=True,
-                                        verbose_name='ID цены Stripe')
-    stripe_session_id = models.CharField(max_length=255, blank=True,
-                                          verbose_name='ID сессии Stripe')
-    payment_link = models.URLField(max_length=500, blank=True,
-                                    verbose_name='Ссылка на оплату')
-    payment_status = models.CharField(max_length=50, blank=True,
-                                       verbose_name='Статус оплаты в Stripe')
+    stripe_product_id = models.CharField(
+        max_length=255, blank=True, verbose_name="ID продукта Stripe"
+    )
+    stripe_price_id = models.CharField(
+        max_length=255, blank=True, verbose_name="ID цены Stripe"
+    )
+    stripe_session_id = models.CharField(
+        max_length=255, blank=True, verbose_name="ID сессии Stripe"
+    )
+    payment_link = models.URLField(
+        max_length=500, blank=True, verbose_name="Ссылка на оплату"
+    )
+    payment_status = models.CharField(
+        max_length=50, blank=True, verbose_name="Статус оплаты в Stripe"
+    )
 
     class Meta:
         verbose_name = "Платеж"

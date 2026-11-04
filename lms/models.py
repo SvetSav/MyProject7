@@ -17,6 +17,11 @@ class Course(models.Model):
     )
     description = models.TextField(blank=True, verbose_name="Описание")
 
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name="Дата обновления",
+    )
+
     class Meta:
         ordering = ["id"]
 

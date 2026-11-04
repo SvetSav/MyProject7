@@ -1,9 +1,46 @@
+from datetime import timedelta
+from unittest.mock import patch
+
 from django.contrib.auth.models import Group
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from lms.models import Course, Lesson, Subscription
 from users.models import User
+
+
+class CourseUpdateTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(email="u@t.com", password="pass12345")
+        self.course = Course.objects.create(title="Курс", owner=self.user)
+
+        # «Состариваем» курс: updated_at на 5 часов назад
+        # queryset.update() обходит auto_now, поэтому значение сохранится
+        Course.objects.filter(id=self.course.id).update(
+            updated_at=timezone.now() - timedelta(hours=5)
+        )
+        self.course.refresh_from_db()
+
+    @patch("lms.views.send_course_update_notification.delay")
+    def test_update_course_triggers_notification(self, mock_delay):
+        """Если курс не обновлялся > 4 часов — уведомление отправляется."""
+        self.client.force_authenticate(user=self.user)
+        r = self.client.patch(f"/api/courses/{self.course.id}/", {"title": "Новое"})
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        mock_delay.assert_called_once()
+
+    @patch("lms.views.send_course_update_notification.delay")
+    def test_recent_update_does_not_trigger_notification(self, mock_delay):
+        """Если курс обновлялся только что — уведомление НЕ отправляется."""
+        # Возвращаем updated_at на «сейчас»
+        Course.objects.filter(id=self.course.id).update(updated_at=timezone.now())
+        self.course.refresh_from_db()
+
+        self.client.force_authenticate(user=self.user)
+        r = self.client.patch(f"/api/courses/{self.course.id}/", {"title": "Ещё раз"})
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        mock_delay.assert_not_called()
 
 
 class ApiTests(APITestCase):
