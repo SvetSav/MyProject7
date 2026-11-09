@@ -476,3 +476,56 @@ EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
 STRIPE_SECRET_KEY=
 STRIPE_MOCK=true
 ```
+
+## Запуск через Docker Compose
+
+1. Подготовка
+
+Скопируйте шаблон окружения и заполните значения:
+
+```
+cp .env.example .env
+```
+В .env укажите SECRET_KEY, POSTGRES_PASSWORD и, если нужно, настройки email/Stripe.
+
+2. Запуск
+```
+docker compose up --build
+```
+Compose соберёт образ, запустит PostgreSQL, Redis, выполнит миграции (migrate), затем поднимет Django (web), Celery Worker и Celery Beat.
+
+После старта API доступно по адресу http://127.0.0.1:8000/api/, документация — http://127.0.0.1:8000/api/docs/.
+
+3. Создание суперпользователя
+```
+docker compose exec web python manage.py createsuperuser
+```
+Логин — email, не username.
+
+4. Просмотр логов
+```
+docker compose logs -f web
+docker compose logs -f celery_worker
+docker compose logs -f celery_beat
+```
+5. Остановка
+```
+docker compose down
+```
+С volumes (удалить данные БД и Redis):
+```
+docker compose down -v
+```
+6. Пересборка после изменений
+```
+docker compose up --build
+```
+### Примечания
+db и redis используют expose и доступны только внутри сети Compose. Наружу опубликован только web (порт 8000).
+
+Данные PostgreSQL и Redis сохраняются в volumes postgres_data и redis_data.
+
+migrate — одноразовый сервис; web, celery_worker и celery_beat стартуют только после успешных миграций.
+
+В docker-compose.yml переменные CELERY_BROKER_URL и CELERY_RESULT_BACKEND переопределены на redis://redis:6379/0 и /1 
+— внутри Compose используется имя сервиса redis.

@@ -15,3 +15,7 @@ pycache/
 login.ps1
 .coverage
 htmlcov/
+*.sqlite3
+staticfiles/
+celerybeat-schedule*
+celerybeat.pid

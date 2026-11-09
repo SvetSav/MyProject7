@@ -7,6 +7,16 @@ coverage>=7.0
 drf-spectacular[sidecar]>=0.29.0
 stripe>=7.0.0
 celery>=5.4.0
+kombu>=5.4.0
 redis>=5.0.0
+packaging>=23.0
 django-environ>=0.11.0
 django-celery-beat>=2.7.0
+
+# WSGI-сервер для Docker
+gunicorn>=21.2.0
+
+# PostgreSQL-драйвер (для docker-compose)
+psycopg2-binary>=2.9.9
+
+whitenoise>=6.6.0
