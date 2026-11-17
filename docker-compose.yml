@@ -40,8 +40,8 @@ services:
       db:
         condition: service_healthy
     command: >
-      sh -c "python manage.py migrate --noinput &&
-             python manage.py spectacular --file schema.yaml --validate || true"
+      sh -c "python manage.py collectstatic --noinput &&
+             python manage.py migrate --noinput"
     restart: "no"
 
   web:
