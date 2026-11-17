@@ -1,190 +1,235 @@
 # LMS Project
 
-Django REST Framework проект с кастомной моделью пользователя (авторизация по email), курсами и уроками.
+Django REST Framework проект для онлайн-обучения: курсы, уроки, пользователи с авторизацией по email, 
+платежи через Stripe (mock-режим), подписки на обновления курсов, фоновые задачи (Celery), 
+документация OpenAPI и автоматический CI/CD деплой на удалённый сервер.
 
 ## Стек
 
-- Python 3.10+
-- Django 6.0+
+- Python 3.12 (в Docker) / 3.10+ (локально)
+- Django 5.2+
 - Django REST Framework 3.18+
-- djangorestframework-simplejwt
-- drf-spectacular + drf-spectacular-sidecar
+- djangorestframework-simplejwt (JWT-авторизация)
+- drf-spectacular + drf-spectacular-sidecar (OpenAPI 3.0)
 - django-filter
-- **Celery 5.6+** (фоновые задачи)
-- **Celery Beat + django-celery-beat** (периодические задачи)
-- **Redis 7** (брокер и result backend)
-- **django-environ** (переменные окружения)
-- stripe (mock-режим)
+- Celery 5.7 + Celery Beat + django-celery-beat
+- Redis 7
+- PostgreSQL 15
+- django-environ
+- Stripe (mock-режим)
 - Pillow
+- Gunicorn (WSGI-сервер в production)
+- Nginx (reverse-proxy + статика)
+- Docker + Docker Compose
+- GitHub Actions (CI/CD)
 - coverage
 
-## Установка
+## Структура проекта
 
 ```
-# 1. Клонировать репозиторий
-git clone <URL_репозитория>
-cd <папка_проекта>
+.
+├── .github/
+│   └── workflows/
+│       └── deploy.yml          # CI/CD workflow
+├── config/
+│   ├── celery.py               # инстанс Celery
+│   ├── settings.py             # настройки, env
+│   ├── urls.py
+│   └── __init__.py             # загрузка celery_app
+├── lms/
+│   ├── models.py               # Course, Lesson, Subscription
+│   ├── serializers.py
+│   ├── views.py
+│   ├── tasks.py                # Celery-задачи
+│   ├── stripe_service.py       # Stripe (mock + real)
+│   ├── validators.py           # YouTubeOnlyValidator
+│   └── paginators.py
+├── users/
+│   ├── models.py               # User, Payment
+│   ├── tasks.py                # Celery-задачи
+│   ├── views.py
+│   ├── serializers.py
+│   ├── permissions.py
+│   └── filters.py
+├── .env.template               # шаблон переменных окружения (коммитится)
+├── .gitignore
+├── Dockerfile                  # образ для production
+├── docker-compose.yml          # сервисы: db, redis, web, celery, migrate
+├── schema.yaml                 # OpenAPI-схема
+├── coverage.txt                # отчёт покрытия тестами
+├── manage.py
+├── requirements.txt
+└── README.md
+```
 
-# 2. Создать и активировать виртуальное окружение
+## Быстрый старт (локально, без Docker)
+
+```bash
+# 1. Клонировать репозиторий
+git clone https://github.com/SvetSav/MyProject7.git
+cd MyProject7
+
+# 2. Виртуальное окружение
 python -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
 
-Настройки окружения
-cp .env.example .env       # Windows: copy .env.example .env
-# Отредактируйте .env: SECRET_KEY, CELERY_*, EMAIL_*
-
-# 3. Установить зависимости
+# 3. Зависимости
 pip install -r requirements.txt
 
-# 4. Redis (Docker)
-docker run -d --name redis -p 6379:6379 redis:7
+# 4. Настройки окружения
+cp .env.template .env           # Windows: copy .env.template .env
+# Отредактируйте .env: SECRET_KEY, ALLOWED_HOSTS, POSTGRES_*, EMAIL_*
 
-# 5. Применить миграции
+# 5. Миграции
 python manage.py migrate
-# Если в репозитории нет готовых миграций, сначала выполните:
-# python manage.py makemigrations users lms
 
-# 6. Создать суперпользователя
-#    Внимание: в качестве логина используется EMAIL, а не username.
+# 6. Суперпользователь (логин — EMAIL, а не username)
 python manage.py createsuperuser
 
-# 7. Запустить сервер
+# 7. Запуск
 python manage.py runserver
+```
 
 После запуска:
+- API: `http://127.0.0.1:8000/api/`
+- Swagger UI: `http://127.0.0.1:8000/api/docs/`
+- Админка: `http://127.0.0.1:8000/admin/`
 
-API доступно по адресу http://127.0.0.1:8000/api/
+## Быстрый старт (Docker Compose)
 
-Админка: http://127.0.0.1:8000/admin/
+```bash
+# 1. Настройки окружения
+cp .env.template .env
+# Отредактируйте .env
 
-# 8. Загрузить тестовые платежи (одно из двух)
-python manage.py loaddata payments
-### или, если фикстура не подходит по ID:
-python manage.py load_payments
+# 2. Запуск всех сервисов одной командой
+docker compose up --build
 
-> ⚠️ Фикстура `payments.json` ссылается на конкретные ID пользователей, курсов и уроков.
-> Если в вашей БД этих ID нет — используйте команду `load_payments`, она подставит
-> случайные существующие объекты.
-
-# 9. Три окна:
-# Окно 1 — Django
-python manage.py runserver
-
-# Окно 2 — Worker
-celery -A config worker -l info -P solo
-
-# Окно 3 — Beat (опционально, для периодических задач)
-celery -A config beat -l info
+# 3. Создать суперпользователя (логин — EMAIL)
+docker compose exec web python manage.py createsuperuser
 ```
 
-## Эндпоинты
+Что запустится:
+- `db` — PostgreSQL 15 (volume `postgres_data`)
+- `redis` — Redis 7 (volume `redis_data`)
+- `migrate` — одноразовый сервис (миграции + `collectstatic`)
+- `web` — Gunicorn (порт `127.0.0.1:8000`)
+- `celery_worker` — Celery Worker
+- `celery_beat` — Celery Beat (расписание из БД)
+
+Остановка:
+```bash
+docker compose down          # остановить
+docker compose down -v       # остановить + удалить volumes (данные БД!)
 ```
-Метод	                     URL	                    Описание
-GET/POST	        /api/courses/	                  Список / создание курсов
-GET/PUT/PATCH/DELETE	/api/courses/{id}/	          Детали / обновление / удаление курса
-GET/POST	        /api/lessons/	                  Список / создание уроков
-GET/PUT/PATCH/DELETE	/api/lessons/{id}/	          Детали / обновление / удаление урока
-GET/PUT/PATCH	        /api/users/{id}/	          Просмотр / редактирование профиля (доп. задание)
-GET/POST/PUT/DELETE     /api/payments/                    CRUD по платежам + фильтрация
-POST	                /api/payments/create/	          Создаёт продукт, цену и сессию Stripe, сохраняет платёж, возвращает payment_url
-GET	                /api/payments/status/{session_id}/ Проверяет и синхронизирует статус сессии (доп. задание)
-```
 
-## Особенности сериализаторов
-CourseSerializer возвращает lessons_count (количество уроков) и lessons
-(вложенный список уроков через LessonSerializer).
+## Production-деплой
 
-UserSerializer возвращает payments — историю платежей пользователя
-(дополнительное задание).
+Приложение развёрнуто на удалённом сервере (Ubuntu 22.04, Yandex Cloud).
 
-## Фильтрация и сортировка платежей
+### Адреса
 
-- `?ordering=payment_date` — по дате оплаты (по возрастанию)
-- `?ordering=-payment_date` — по дате оплаты (по убыванию)
-- `?course=<id>` — только платежи за указанный курс
-- `?lesson=<id>` — только платежи за указанный урок
-- `?payment_method=cash` — только наличные
-- `?payment_method=transfer` — только переводы на счёт
+- API: `http://153.51.162.248/api/`
+- Swagger UI: `http://153.51.162.248/api/docs/`
+- ReDoc: `http://153.51.162.248/api/redoc/`
+- Админка: `http://153.51.162.248/admin/`
 
-Примеры:
-- `/api/payments/?course=1&payment_method=transfer`
-- `/api/payments/?ordering=-payment_date`
-
-## Тестирование
-
-Проверка эндпоинтов выполняется через Postman.
+### Архитектура
 
 ```
-Пример создания курса (POST /api/courses/):
-
-Body → form-data:
-title — текст
-description — текст
-preview — тип File, выбрать картинку
-
-
-Пример создания урока (POST /api/lessons/):
-
-Body → form-data:
-course — id существующего курса (число)
-title — текст
-description — текст
-video_link — URL
-preview — тип File, выбрать картинку
-
-Запуск автотестов:
-python manage.py test
+Интернет → Nginx (порт 80) → Gunicorn (в Docker, 127.0.0.1:8000) → Django
+                                     │
+                                     ├── PostgreSQL (Docker, volume)
+                                     ├── Redis (Docker, volume)
+                                     ├── Celery Worker
+                                     └── Celery Beat
 ```
-Для загрузки изображений (avatar, preview) используйте form-data с типом поля File.
 
-## Аутентификация
+- **Nginx** слушает порт 80 и проксирует запросы на `127.0.0.1:8000`.
+- **Gunicorn** (в контейнере `web`) обрабатывает запросы Django.
+- **PostgreSQL** и **Redis** доступны только внутри Docker-сети (`expose`, не `ports`).
+- **Порт 8000** привязан к `127.0.0.1` — снаружи недоступен.
 
-Проект использует JWT. Все эндпоинты, кроме регистрации и получения токена,
-требуют заголовок `Authorization: Bearer <access_token>`.
+### Переменные окружения
 
-### Получение токена
-POST /api/token/
-Body: { "email": "...", "password": "..." }
+Все секреты вынесены в `.env` на сервере. Шаблон — `.env.template` в репозитории.
 
-### Обновление токена
-POST /api/token/refresh/
-Body: { "refresh": "..." }
+| Переменная | Описание |
+|-----------|----------|
+| `SECRET_KEY` | Секретный ключ Django |
+| `DEBUG` | `False` в production |
+| `ALLOWED_HOSTS` | Публичный IP сервера, `localhost`, `127.0.0.1` |
+| `POSTGRES_DB` | Имя БД |
+| `POSTGRES_USER` | Пользователь БД |
+| `POSTGRES_PASSWORD` | Пароль БД |
+| `CELERY_BROKER_URL` | `redis://redis:6379/0` |
+| `CELERY_RESULT_BACKEND` | `redis://redis:6379/1` |
+| `EMAIL_BACKEND` | `console` (или `smtp` для реальной отправки) |
+| `EMAIL_HOST` | SMTP-хост (если `smtp`) |
+| `EMAIL_PORT` | SMTP-порт (если `smtp`) |
+| `EMAIL_USE_TLS` | `True` (если `smtp`) |
+| `EMAIL_HOST_USER` | Логин SMTP (если `smtp`) |
+| `EMAIL_HOST_PASSWORD` | Пароль приложения (если `smtp`) |
+| `DEFAULT_FROM_EMAIL` | Адрес отправителя |
+| `STRIPE_MOCK` | `true` (mock-режим) |
+| `STRIPE_SECRET_KEY` | Ключ Stripe (если `STRIPE_MOCK=false`) |
 
-## Роли
+> ⚠️ `.env` **не коммитится** (в `.gitignore`). Все значения для CI/CD передаются через **GitHub Secrets**.
 
-- **Обычный пользователь** — видит/редактирует/удаляет только свои курсы и уроки.
-- **Moderators** (группа) — видит и редактирует любые курсы и уроки, но не может
-  создавать и удалять. Назначается через админку.
+### Авто-запуск и перезапуск
 
-## Регистрация
-POST /api/users/
-Body: { "email", "password", "first_name", "phone", "city" }
-Доступна без токена.
+- **systemd** (`lms-compose.service`) — запускает `docker compose up -d` при загрузке сервера.
+- **Docker** (`restart: unless-stopped` / `always`) — перезапускает упавшие контейнеры.
+- **Nginx** — включён в автозапуск (`systemctl enable nginx`).
 
-## Подписки
+Проверка авто-перезапуска:
 
-- `POST /api/subscribe/` — подписаться или отписаться (toggle).
-  Body: `{"course_id": <id>}`. Возвращает `{"message": "...", "is_subscribed": bool}`.
-- Поле `is_subscribed` в `GET /api/courses/{id}/` показывает подписку текущего пользователя.
-
-## Пагинация
-
-- `/api/courses/?page=2&page_size=5` — 5 курсов на страницу, страница 2.
-- `/api/lessons/?page=1&page_size=10` — 10 уроков на страницу.
-- По умолчанию: курсы — 10, уроки — 5.
-
-## Валидация
-
-- `video_link` в уроках допускает только ссылки на `youtube.com` и `youtu.be`.
-- Ссылки на другие домены отклоняются с ошибкой 400.
-
-## Тесты
-
+```bash
+cd /var/www/myproject
+docker compose exec web python -c "import os, signal; os.kill(1, signal.SIGTERM)"
+sleep 5
+docker compose ps -a web
+docker inspect myproject-web-1 --format 'RestartCount: {{.RestartCount}}'
 ```
-python manage.py test lms -v 2
-coverage run --source='.' manage.py test lms
-coverage report > coverage.txt
+
+**Ожидаемо:** `web` снова `Up`, `RestartCount > 0`.
+
+### Firewall (UFW)
+
+Открыты только порты 22 (SSH), 80 (HTTP), 443 (HTTPS):
+
+```bash
+sudo ufw status verbose
 ```
+
+### SSH-доступ к серверу
+
+Для деплоя и отладки используется отдельный SSH-ключ (не пароль).
+
+**Генерация ключа (один раз, на локальной машине):**
+
+```powershell
+ssh-keygen -t ed25519 -f $env:USERPROFILE\deploy_key -N '""'
+```
+
+- `deploy_key` — **приватный** ключ (для GitHub Secrets `SSH_PRIVATE_KEY`).
+- `deploy_key.pub` — **публичный** ключ (добавляется в `~/.ssh/authorized_keys` на сервере).
+
+**Добавление публичного ключа на сервер:**
+
+```bash
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+echo "ssh-ed25519 AAAA... (ваш публичный ключ)" >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+```
+
+**Подключение:**
+
+```powershell
+ssh -i $env:USERPROFILE\deploy_key superuser1@153.51.162.248
+```
+
+> ⚠️ Приватный ключ **никогда** не коммитится в репозиторий. Он передаётся только через GitHub Secrets.
 
 ## Документация API
 
@@ -198,24 +243,17 @@ coverage report > coverage.txt
 
 ### Генерация и валидация схемы
 
-```
-# Проверить схему на ошибки и предупреждения
+```bash
 python manage.py spectacular --color --file schema.yaml --validate
-
-# Или без записи в файл
-python manage.py spectacular --validate
 ```
 
-Схема генерируется без warnings и errors. 
-Если появились warnings — смотрите @extend_schema_field в lms/serializers.py и 
-@extend_schema_view в lms/views.py / users/views.py.
+Схема генерируется **без warnings и errors**.
 
+### Локальные UI (без CDN)
 
-## Локальные UI (без CDN)
-Так как cdn.jsdelivr.net и cdn.redoc.ly могут быть недоступны из некоторых регионов, 
-в проекте включён sidecar-режим — все JS/CSS-ресурсы Swagger UI и ReDoc отдаются локально через Django:
+Так как `cdn.jsdelivr.net` и `cdn.redoc.ly` могут быть недоступны из некоторых регионов, в проекте включён **sidecar-режим** — все JS/CSS-ресурсы Swagger UI и ReDoc отдаются локально через Django:
 
-```
+```python
 SPECTACULAR_SETTINGS = {
     ...
     'SWAGGER_UI_DIST': 'SIDECAR',
@@ -224,179 +262,171 @@ SPECTACULAR_SETTINGS = {
 }
 ```
 
-Документация работает без доступа к интернету.
+Документация работает **без доступа к интернету**.
 
-## Оплата через Stripe
+## Эндпоинты
 
-### Режимы работы
+| Метод | URL | Описание |
+|-------|-----|----------|
+| POST | `/api/token/` | Получить JWT (access + refresh) по email и паролю |
+| POST | `/api/token/refresh/` | Обновить access-токен |
+| GET / POST | `/api/courses/` | Список / создание курсов |
+| GET / PUT / PATCH / DELETE | `/api/courses/{id}/` | Детали / обновление / удаление курса |
+| GET / POST | `/api/lessons/` | Список / создание уроков |
+| GET / PUT / PATCH / DELETE | `/api/lessons/{id}/` | Детали / обновление / удаление урока |
+| GET / POST / PUT / PATCH / DELETE | `/api/payments/` | CRUD по платежам + фильтрация |
+| POST | `/api/payments/create/` | Создание платежа через Stripe (продукт + цена + сессия) |
+| GET | `/api/payments/status/{session_id}/` | Проверка статуса Stripe-сессии (доп. задание) |
+| POST | `/api/subscribe/` | Подписаться / отписаться от курса (toggle) |
+| GET / POST | `/api/users/` | Список / регистрация пользователей |
+| GET / PUT / PATCH | `/api/users/{id}/` | Просмотр / редактирование профиля |
+| GET | `/api/schema/` | OpenAPI-схема |
+| GET | `/api/docs/` | Swagger UI |
+| GET | `/api/redoc/` | ReDoc |
 
-Проект поддерживает **два режима** интеграции Stripe, управляемых переменной `STRIPE_MOCK`:
+## Аутентификация и роли
 
-| Режим | `STRIPE_MOCK` | Что происходит |
-|-------|---------------|----------------|
-| Mock (по умолчанию) | `true` | Запросы к Stripe эмулируются. Создаются `prod_...`, `price_...`, `cs_test_...` локально. `payment_url` ведёт на локальную заглушку. Все поля сохраняются. Позволяет проверить всю логику без реального ключа. |
-| Real | `false` | Реальные запросы к Stripe API. Требует настоящий `sk_test_51...`. Возвращает реальный `checkout.stripe.com` URL. |
+Проект использует **JWT**. Все эндпоинты, кроме регистрации (`POST /api/users/`) и получения токена (`POST /api/token/`), требуют заголовок `Authorization: Bearer <access_token>`.
 
-### Настройка
+### Получение токена
 
 ```
-# Mock (без ключа)
-$env:STRIPE_MOCK = "true"
-
-# Real
-$env:STRIPE_SECRET_KEY = "sk_test_51..."
-$env:STRIPE_MOCK = "false"
+POST /api/token/
+Body: { "email": "...", "password": "..." }
 ```
 
-#### Пример запроса
+### Роли
 
-body = '{"course_id":1,"amount":1500,"payment_method":"transfer"}'
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/payments/create/" -Method Post `
-  -Headers @{ Authorization = "Bearer $adminToken" } `
-  -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) `
-  -ContentType "application/json; charset=utf-8"
+- **Обычный пользователь** — видит/редактирует/удаляет только свои курсы и уроки.
+- **Moderators** (группа) — видит и редактирует любые курсы и уроки, но **не может** создавать и удалять. Назначается через админку.
 
-Ответ: payment (со всеми stripe_* полями) + payment_url.
+### Регистрация
 
-### Важно
-Цена передаётся в копейках (amount × 100).
-Все ID (stripe_product_id, stripe_price_id, stripe_session_id) и payment_link сохраняются в модели Payment.
-Ошибки Stripe → 502 Bad Gateway с понятным сообщением.
-В mock-режиме payment_url ведёт на /api/payments/success/?mock_session=... — это эмуляция успешной оплаты для проверки логики.
+```
+POST /api/users/
+Body: { "email", "password", "first_name", "phone", "city" }
+```
 
-## Celery и фоновые задачи
+Доступна без токена. Повторная регистрация с тем же email → `400 Bad Request`.
 
-Проект использует **Celery** для асинхронной обработки задач и **Celery Beat**
-для периодических задач. В качестве брокера и хранилища результатов используется **Redis**.
+## Дополнительные возможности
 
-### Архитектура
+### Валидация YouTube-ссылок
 
-Django (API) ──► Redis (broker) ──► Celery Worker ──► Redis (result backend)
-▲
-│
-Celery Beat (расписание)
+Поле `video_link` в уроках принимает **только** ссылки на `youtube.com` и `youtu.be`. Ссылки на другие домены отклоняются с сообщением «Ссылка должна вести только на youtube.com».
 
-### Реализованные задачи
+Реализовано в `lms/validators.py` (`YouTubeOnlyValidator`), подключено в `LessonSerializer.Meta.validators`.
+
+### Фильтрация платежей
+
+| Параметр | Описание |
+|----------|----------|
+| `?ordering=payment_date` | Сортировка по дате (возрастание) |
+| `?ordering=-payment_date` | Сортировка по дате (убывание) |
+| `?course=<id>` | Фильтр по курсу |
+| `?lesson=<id>` | Фильтр по уроку |
+| `?payment_method=cash` | Только наличные |
+| `?payment_method=transfer` | Только переводы |
+
+Пример: `/api/payments/?course=1&payment_method=transfer&ordering=-payment_date`
+
+### Пагинация
+
+- Курсы: 10 на страницу (`?page=2&page_size=5`)
+- Уроки: 5 на страницу (`?page=1&page_size=10`)
+
+Максимум: 50 для курсов, 20 для уроков.
+
+### Подписки
+
+- `POST /api/subscribe/` — подписаться или отписаться (toggle).
+  - Body: `{"course_id": <id>}`
+  - Ответ: `{"message": "...", "is_subscribed": true/false}`
+- Поле `is_subscribed` в `GET /api/courses/{id}/` показывает подписку текущего пользователя.
+
+### Celery и фоновые задачи
+
+Проект использует **Celery** для асинхронной обработки задач и **Celery Beat** для периодических задач. Брокер и хранилище результатов — **Redis**.
+
+#### Реализованные задачи
 
 | Задача | Модуль | Тип | Описание |
 |--------|--------|-----|----------|
 | `send_course_update_notification` | `lms.tasks` | событийная | Отправляет email подписчикам курса при его обновлении |
 | `deactivate_inactive_users` | `users.tasks` | периодическая | Блокирует пользователей, не заходивших > 30 дней |
 
-### Настройка Redis через `.env`
+#### Настройка Redis через `.env`
 
-Настройки Redis вынесены в переменные окружения (`.env`):
-
-```
-CELERY_BROKER_URL=redis://127.0.0.1:6379/0
-CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/1
+```env
+CELERY_BROKER_URL=redis://redis:6379/0
+CELERY_RESULT_BACKEND=redis://redis:6379/1
 ```
 
-⚠️ Важно: используйте 127.0.0.1, а не localhost — на Windows localhost
-резолвится в IPv6 (::1), и Celery может не найти Docker-контейнер с Redis.
+> ⚠️ Используйте `127.0.0.1` (не `localhost`), если Redis работает локально. На Windows `localhost` резолвится в IPv6 (`::1`), и Celery может не найти Redis.
 
-Пример .env.example — в корне репозитория. Скопируйте в .env и заполните своими значениями:
+#### Запуск Celery
 
-```
-cp .env.example .env
-```
-### Запуск Redis
-Проект рассчитан на Redis 7, запущенный локально на порту 6379. Проще всего — через Docker:
+**Три отдельных окна** PowerShell (все — с активированным venv, в папке проекта):
 
-```
-docker run -d --name redis -p 6379:6379 redis:7
-```
-
-Проверка:
-
-```
-docker exec -it redis redis-cli ping
-```
-#### Ожидаемо: PONG
-
-⚠️ Redis 3.x (из winget) не подойдёт — он не поддерживает протокол RESP3
-и команду HELLO, из-за чего Celery 5.6+ падает с ошибкой
-unknown command 'HELLO'. Нужен Redis 6.0+.
-
-### Запуск Celery
-Понадобятся три отдельных окна PowerShell (все — с активированным venv, в папке проекта):
-
-Окно 1 — Django-сервер
-```
+**Окно 1 — Django-сервер:**
+```powershell
 cd C:\Users\Honest\Desktop\MyProject7
 .\.venv\Scripts\Activate.ps1
 python manage.py runserver
 ```
 
-Окно 2 — Celery Worker
-```
+**Окно 2 — Celery Worker:**
+```powershell
 cd C:\Users\Honest\Desktop\MyProject7
 .\.venv\Scripts\Activate.ps1
 celery -A config worker -l info -P solo
 ```
-⚠️ Флаг -P solo обязателен на Windows — стандартный пул prefork
-использует fork(), которого нет в Windows.
 
-Ожидаемый вывод:
-```
-[tasks]
-  . lms.tasks.send_course_update_notification
-  . users.tasks.deactivate_inactive_users
-[INFO/MainProcess] celery@... ready.
-```
+> Флаг `-P solo` **обязателен на Windows** — стандартный пул `prefork` использует `fork()`, которого нет в Windows.
 
-Окно 3 — Celery Beat (планировщик)
-```
+**Окно 3 — Celery Beat (планировщик):**
+```powershell
 cd C:\Users\Honest\Desktop\MyProject7
 .\.venv\Scripts\Activate.ps1
 celery -A config beat -l info
 ```
 
-Ожидаемый вывод:
-```
-beat: Starting...
-DatabaseScheduler: Schedule changed.
-```
+#### Расписание периодических задач
 
-### Расписание периодических задач
-Так как используется DatabaseScheduler (из django-celery-beat), расписание
-хранится в БД и управляется через админку:
+Так как используется `DatabaseScheduler` (из `django-celery-beat`), расписание хранится **в БД** и управляется через админку:
 
-http://127.0.0.1:8000/admin/django_celery_beat/periodictask/
+`http://127.0.0.1:8000/admin/django_celery_beat/periodictask/`
 
 Пример задачи:
 
-| Поле                              | Значение      |
-|-----------------------------------|---------------|
-| Name | deactivate-inactive-users   |
-| Task     | users.tasks.deactivate_inactive_users |
-|      Schedule    |                 Crontab: hour=3, minute=0 (ежедневно в 03:00)                      |
-|          Enabled        |           ✅                                                                         |
-
-
-⚠️ Задачи из CELERY_BEAT_SCHEDULE в settings.py не подхватываются —
-DatabaseScheduler читает расписание только из БД.
+| Поле | Значение |
+|------|----------|
+| Name | `deactivate-inactive-users` |
+| Task | `users.tasks.deactivate_inactive_users` |
+| Schedule | Crontab: `hour=3, minute=0` (ежедневно в 03:00) |
+| Enabled | ✅ |
 
 #### Таймзона
-CELERY_TIMEZONE обязательно должен совпадать с TIME_ZONE в Django,
-иначе задачи будут запускаться не в то время:
 
-```
+`CELERY_TIMEZONE` **обязательно** должен совпадать с `TIME_ZONE` в Django:
+
+```python
 # config/settings.py
 CELERY_TIMEZONE = TIME_ZONE
 ```
 
 Проверка:
-```
+
+```bash
 python manage.py shell -c "from django.conf import settings; print(settings.TIME_ZONE, settings.CELERY_TIMEZONE, settings.TIME_ZONE == settings.CELERY_TIMEZONE)"
+# Ожидаемо: UTC UTC True
 ```
-#### Ожидаемо: UTC UTC True
 
-### Логика уведомлений (доп. задание: < 4 часов)
-При обновлении курса уведомление отправляется подписчикам только если
-курс не обновлялся более 4 часов. Реализовано в CourseViewSet.perform_update:
+#### Логика уведомлений (доп. задание: < 4 часов)
 
-```
+При обновлении курса уведомление отправляется подписчикам **только если** курс не обновлялся более 4 часов:
+
+```python
 def perform_update(self, serializer):
     old_updated_at = serializer.instance.updated_at   # до save()
     course = serializer.save()
@@ -406,65 +436,177 @@ def perform_update(self, serializer):
         send_course_update_notification.delay(course.id, course.title)
 ```
 
-### Email в режиме разработки
-Для тестирования без реального SMTP включён console.EmailBackend —
-письма печатаются в консоли Worker-а, а не отправляются:
+#### Проверка задач
 
-```
-# config/settings.py
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-```
-Для реальной отправки — настройте SMTP в .env (см. .env.example) и переключите
-EMAIL_BACKEND на smtp.EmailBackend. Для Yandex/Gmail нужен пароль приложения,
-а не обычный пароль от почты.
-
-Проверка задач
-
-Ручной вызов задачи блокировки:
-
-```
+```bash
+# Ручной вызов задачи блокировки
 python manage.py shell -c "from users.tasks import deactivate_inactive_users; print(deactivate_inactive_users.delay().get(timeout=30))"
+# Ожидаемо: "Заблокировано пользователей: N" или "Нет неактивных пользователей для блокировки"
 ```
-# Ожидаемо: "Заблокировано пользователей: N"
 
-Проверка email-уведомления:
+### Оплата через Stripe
 
-Обновите курс через API (PATCH /api/courses/1/).
+#### Режимы работы
 
-В окне Worker появится:
+Проект поддерживает **два режима** интеграции Stripe, управляемых переменной `STRIPE_MOCK`:
 
+| Режим | `STRIPE_MOCK` | Что происходит |
+|-------|---------------|----------------|
+| Mock (по умолчанию) | `true` | Запросы к Stripe эмулируются. Создаются `prod_...`, `price_...`, `cs_test_...` локально. `payment_url` ведёт на локальную заглушку. Все поля сохраняются. Позволяет проверить всю логику без реального ключа. |
+| Real | `false` | Реальные запросы к Stripe API. Требует настоящий `sk_test_51...`. Возвращает реальный `checkout.stripe.com` URL. |
+
+#### Настройка
+
+```powershell
+# Mock (без ключа)
+$env:STRIPE_MOCK = "true"
+
+# Real
+$env:STRIPE_SECRET_KEY = "sk_test_51..."
+$env:STRIPE_MOCK = "false"
 ```
-Task lms.tasks.send_course_update_notification[...] received
-Task ... succeeded in 0.05s: Письма отправлены: N получателей
-Текст письма будет напечатан в консоли (при console.EmailBackend).
+
+#### Эндпоинты
+
+| Метод | URL | Описание |
+|-------|-----|----------|
+| POST | `/api/payments/create/` | Создаёт продукт, цену и сессию Stripe, сохраняет платёж, возвращает `payment_url` |
+| GET | `/api/payments/status/{session_id}/` | Проверяет и синхронизирует статус сессии (доп. задание) |
+
+#### Пример запроса
+
+```powershell
+$body = '{"course_id":1,"amount":1500,"payment_method":"transfer"}'
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/payments/create/" -Method Post `
+  -Headers @{ Authorization = "Bearer $adminToken" } `
+  -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) `
+  -ContentType "application/json; charset=utf-8"
 ```
+
+Ответ: `payment` (со всеми `stripe_*` полями) + `payment_url`.
+
+#### Важно
+
+- Цена передаётся **в копейках** (`amount × 100`).
+- Все ID (`stripe_product_id`, `stripe_price_id`, `stripe_session_id`) и `payment_link` сохраняются в модели `Payment`.
+- Ошибки Stripe → `502 Bad Gateway` с понятным сообщением.
+- В mock-режиме `payment_url` ведёт на `/api/payments/success/?mock_session=...` — эмуляция успешной оплаты для проверки логики.
+
+## CI/CD (GitHub Actions)
+
+Workflow: `.github/workflows/deploy.yml`.
+
+### Триггеры
+
+- **`push` в `develope`** → job'ы `test`, `lint` (деплой **не** запускается).
+- **`push` в `main`** → job'ы `test`, `lint`, **`deploy`**.
+- **`pull_request` в `main`** → job'ы `test`, `lint`.
+
+### Этапы
+
+1. **`test`** — устанавливает зависимости, запускает `python manage.py test` с переменными окружения для CI (SQLite, `console` email, `STRIPE_MOCK=true`).
+2. **`lint`** — `flake8 . --select=E9,F63,F7,F82` (синтаксические ошибки). Запускается **после** `test` (`needs: test`).
+3. **`deploy`** — `rsync` файлов на сервер + `ssh`-команды:
+   - `docker compose up -d --build`
+   - `python manage.py migrate`
+   - `python manage.py collectstatic --noinput`
+
+### GitHub Secrets
+
+Для работы деплоя в настройках репозитория (**Settings → Secrets and variables → Actions**) должны быть:
+
+| Секрет | Значение |
+|--------|----------|
+| `SSH_HOST` | Публичный IP сервера |
+| `SSH_USER` | Пользователь на сервере (`superuser1`) |
+| `SSH_PRIVATE_KEY` | Приватный SSH-ключ (содержимое `deploy_key`) |
+| `DJANGO_SECRET_KEY` | Секретный ключ Django (генерируется) |
+| `DJANGO_ALLOWED_HOSTS` | `IP,localhost,127.0.0.1` |
+| `POSTGRES_DB` | `lms_db` |
+| `POSTGRES_USER` | `lms_user` |
+| `POSTGRES_PASSWORD` | Пароль БД |
+| `DEFAULT_FROM_EMAIL` | `noreply@example.com` |
+
+### Проверка workflow
+
+1. Откройте `https://github.com/SvetSav/MyProject7/actions`.
+2. Убедитесь, что последний запуск — зелёный.
+3. В логах job'а `deploy` — успешные `docker compose up` и `migrate`.
+
+### Как проверить, что деплой сработал
+
+1. Внесите изменение в `README.md` (или любой файл).
+2. Закоммитьте и запушьте в `main`:
+   ```bash
+   git checkout main
+   git pull origin main
+   # измените README.md
+   git add README.md
+   git commit -m "test: проверка деплоя"
+   git push origin main
+   ```
+3. Дождитесь зелёного workflow в Actions.
+4. На сервере:
+   ```bash
+   cd /var/www/myproject
+   cat README.md | head -5   # должны увидеть изменения
+   ```
+
+## Тесты и покрытие
+
+```bash
+# Запустить все тесты
+python manage.py test
+
+# Запустить только тесты приложения lms
+python manage.py test lms -v 2
+
+# Покрытие тестами
+pip install coverage
+coverage run --source='.' manage.py test
+coverage report > coverage.txt
+coverage html      # HTML-отчёт в htmlcov/index.html
+```
+
+Текущее покрытие: **93%** (`coverage.txt` в корне репозитория).
 
 ## Переменные окружения
 
-Настройки читаются из `.env` через `django-environ`. Шаблон — в `.env.example`.
+Настройки читаются из `.env` через `django-environ`. Шаблон — в `.env.template`.
 
 | Переменная | Обязательна | Описание |
 |-----------|-------------|----------|
 | `SECRET_KEY` | Да | Секретный ключ Django |
 | `DEBUG` | Да | `True` / `False` |
-| `CELERY_BROKER_URL` | Да | URL брокера Redis (например, `redis://127.0.0.1:6379/0`) |
-| `CELERY_RESULT_BACKEND` | Да | URL result backend (`redis://127.0.0.1:6379/1`) |
-| `EMAIL_BACKEND` | Нет | По умолчанию `console`; для отправки — `smtp.EmailBackend` |
-| `EMAIL_HOST` | Для SMTP | SMTP-хост (`smtp.yandex.ru`, `smtp.gmail.com`) |
+| `ALLOWED_HOSTS` | Да | Список хостов через запятую |
+| `POSTGRES_DB` | Да (Docker) | Имя БД |
+| `POSTGRES_USER` | Да (Docker) | Пользователь БД |
+| `POSTGRES_PASSWORD` | Да (Docker) | Пароль БД |
+| `CELERY_BROKER_URL` | Да | URL брокера Redis |
+| `CELERY_RESULT_BACKEND` | Да | URL result backend |
+| `EMAIL_BACKEND` | Нет | По умолчанию `console`; для отправки — `smtp` |
+| `EMAIL_HOST` | Для SMTP | SMTP-хост |
 | `EMAIL_PORT` | Для SMTP | `587` (TLS) или `465` (SSL) |
+| `EMAIL_USE_TLS` | Для SMTP | `True` / `False` |
 | `EMAIL_HOST_USER` | Для SMTP | Email-адрес |
-| `EMAIL_HOST_PASSWORD` | Для SMTP | **Пароль приложения** (не обычный пароль) |
-| `STRIPE_SECRET_KEY` | Для Stripe | `sk_test_51...` или пусто (mock-режим) |
+| `EMAIL_HOST_PASSWORD` | Для SMTP | Пароль приложения (не обычный пароль) |
+| `DEFAULT_FROM_EMAIL` | Да | Адрес отправителя |
 | `STRIPE_MOCK` | Нет | `true` (по умолчанию) / `false` |
+| `STRIPE_SECRET_KEY` | Для Stripe | `sk_test_51...` или пусто (mock) |
 
-Пример `.env.example`:
+Пример `.env.template`:
 
-```
+```env
 SECRET_KEY=django-insecure-change-me
-DEBUG=True
+DEBUG=False
+ALLOWED_HOSTS=your-server-ip,localhost,127.0.0.1
 
-CELERY_BROKER_URL=redis://127.0.0.1:6379/0
-CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/1
+POSTGRES_DB=lms_db
+POSTGRES_USER=lms_user
+POSTGRES_PASSWORD=change-me
+
+CELERY_BROKER_URL=redis://redis:6379/0
+CELERY_RESULT_BACKEND=redis://redis:6379/1
 
 EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
 # EMAIL_HOST=smtp.yandex.ru
@@ -472,60 +614,57 @@ EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
 # EMAIL_USE_TLS=True
 # EMAIL_HOST_USER=your_email@yandex.ru
 # EMAIL_HOST_PASSWORD=your_app_password
+DEFAULT_FROM_EMAIL=noreply@example.com
 
 STRIPE_SECRET_KEY=
 STRIPE_MOCK=true
 ```
 
-## Запуск через Docker Compose
+> ⚠️ `.env` **никогда не коммитится**. В репозитории только `.env.template` с placeholder-значениями.
 
-1. Подготовка
+## Чек-лист проверки работы
 
-Скопируйте шаблон окружения и заполните значения:
+### 1. Сервер и приложение
 
-```
-cp .env.example .env
-```
-В .env укажите SECRET_KEY, POSTGRES_PASSWORD и, если нужно, настройки email/Stripe.
+- [ ] `http://153.51.162.248/api/docs/` — Swagger UI открывается
+- [ ] `http://153.51.162.248/admin/` — админка открывается
+- [ ] `curl -i http://127.0.0.1/api/` на сервере → `401 Unauthorized`
+- [ ] `sudo systemctl status nginx` → `active (running)`
 
-2. Запуск
-```
-docker compose up --build
-```
-Compose соберёт образ, запустит PostgreSQL, Redis, выполнит миграции (migrate), затем поднимет Django (web), Celery Worker и Celery Beat.
+### 2. Безопасность
 
-После старта API доступно по адресу http://127.0.0.1:8000/api/, документация — http://127.0.0.1:8000/api/docs/.
+- [ ] `Test-NetConnection -ComputerName 153.51.162.248 -Port 8000` → `False`
+- [ ] `sudo ufw status verbose` → только 22, 80, 443
+- [ ] `ssh -i deploy_key superuser1@153.51.162.248` → вход без пароля
+- [ ] `.env` отсутствует в `git ls-files`
 
-3. Создание суперпользователя
-```
-docker compose exec web python manage.py createsuperuser
-```
-Логин — email, не username.
+### 3. Авто-перезапуск
 
-4. Просмотр логов
-```
-docker compose logs -f web
-docker compose logs -f celery_worker
-docker compose logs -f celery_beat
-```
-5. Остановка
-```
-docker compose down
-```
-С volumes (удалить данные БД и Redis):
-```
-docker compose down -v
-```
-6. Пересборка после изменений
-```
-docker compose up --build
-```
-### Примечания
-db и redis используют expose и доступны только внутри сети Compose. Наружу опубликован только web (порт 8000).
+- [ ] `sudo systemctl status lms-compose` → `active (exited)`
+- [ ] `docker compose exec web python -c "import os, signal; os.kill(1, signal.SIGTERM)"` + `sleep 5` + `docker compose ps -a web` → `Up`, `RestartCount > 0`
+- [ ] `sudo reboot` → после загрузки все контейнеры `Up`, Nginx `active`
 
-Данные PostgreSQL и Redis сохраняются в volumes postgres_data и redis_data.
+### 4. CI/CD
 
-migrate — одноразовый сервис; web, celery_worker и celery_beat стартуют только после успешных миграций.
+- [ ] `https://github.com/SvetSav/MyProject7/actions` → последний запуск зелёный
+- [ ] В `deploy.yml` порядок: `test` → `lint` → `deploy` (`needs`)
+- [ ] В GitHub Secrets — 9 переменных
+- [ ] PR `develope → main` смержен
+- [ ] `deploy` job на `main` — зелёный
+- [ ] После деплоя на сервере: `cat README.md` показывает изменения
 
-В docker-compose.yml переменные CELERY_BROKER_URL и CELERY_RESULT_BACKEND переопределены на redis://redis:6379/0 и /1 
-— внутри Compose используется имя сервиса redis.
+### 5. Репозиторий
+
+- [ ] `git ls-files | Select-String "\.env$|venv|__pycache__|patch\.json"` → пусто
+- [ ] `.env.template` содержит все переменные, без реальных секретов
+- [ ] `git log --oneline -10` — осмысленные коммиты
+- [ ] PR содержит только нужные файлы
+
+## Примечания
+
+- Эндпоинты **не защищены авторизацией** только для `/api/token/` и `POST /api/users/` (регистрация). Остальные требуют JWT.
+- Медиафайлы (аватарки, превью) раздаются через Nginx (`/media/`) или Django (в `DEBUG`).
+- Статика (`/static/`) собирается через `collectstatic` и раздаётся Nginx.
+- Модель пользователя использует `email` как `USERNAME_FIELD`.
+- Celery Worker на Windows требует `-P solo`.
+- Stripe работает в mock-режиме (без реальных ключей) — это позволяет проверить всю логику оплаты без внешних зависимостей.
