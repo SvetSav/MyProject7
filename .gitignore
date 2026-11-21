@@ -19,3 +19,9 @@ htmlcov/
 staticfiles/
 celerybeat-schedule*
 celerybeat.pid
+patch.json
+
+keyforpass
+keyforpass.pub
+*.pem
+*.key

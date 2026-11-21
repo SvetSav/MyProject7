@@ -136,19 +136,30 @@ docker compose down -v       # остановить + удалить volumes (д
 
 ### Архитектура
 
+Все сервисы контейнеризованы и запускаются одной командой `docker compose up -d`:
 ```
-Интернет → Nginx (порт 80) → Gunicorn (в Docker, 127.0.0.1:8000) → Django
-                                     │
-                                     ├── PostgreSQL (Docker, volume)
-                                     ├── Redis (Docker, volume)
-                                     ├── Celery Worker
-                                     └── Celery Beat
+Интернет → Nginx (контейнер, порт 80) → Gunicorn (контейнер web, 8000) → Django
+│
+├── PostgreSQL (контейнер db, volume)
+├── Redis (контейнер redis, volume)
+├── Celery Worker (контейнер)
+└── Celery Beat (контейнер)
 ```
 
-- **Nginx** слушает порт 80 и проксирует запросы на `127.0.0.1:8000`.
-- **Gunicorn** (в контейнере `web`) обрабатывает запросы Django.
-- **PostgreSQL** и **Redis** доступны только внутри Docker-сети (`expose`, не `ports`).
-- **Порт 8000** привязан к `127.0.0.1` — снаружи недоступен.
+| Сервис | Контейнер | Порт | Описание |
+|--------|-----------|------|----------|
+| `nginx` | `nginx:1.25-alpine` | **80** | Reverse-proxy, раздаёт `/static/`, `/media/` |
+| `web` | `myproject-web` | 8000 (внутренний) | Gunicorn + Django |
+| `db` | `postgres:15-alpine` | 5432 (внутренний) | PostgreSQL, volume `postgres_data` |
+| `redis` | `redis:7-alpine` | 6379 (внутренний) | Redis, volume `redis_data` |
+| `celery_worker` | `myproject-celery_worker` | — | Celery Worker |
+| `celery_beat` | `myproject-celery_beat` | — | Celery Beat (DatabaseScheduler) |
+| `migrate` | `myproject-migrate` | — | Одноразовый (migrate + collectstatic) |
+
+- **Наружу** открыт только порт **80** (Nginx). Порт 8000 у `web` — `expose`, не доступен снаружи.
+- **PostgreSQL** и **Redis** — только внутри Docker-сети (`expose`).
+- **Nginx** раздаёт статику из `/app/staticfiles/` (volume `./staticfiles`) и медиа из `/app/media/`.
+- **UFW** открывает только 22 (SSH), 80 (HTTP), 443 (HTTPS).
 
 ### Переменные окружения
 
