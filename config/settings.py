@@ -228,12 +228,13 @@ MAILERS = {
             "port": env.int("EMAIL_PORT", default=465),
             "use_tls": env.bool("EMAIL_USE_TLS", default=True),
             "use_ssl": env.bool("EMAIL_USE_SSL", default=False),
-            "username": env("EMAIL_HOST_USER"),
+            "username": env("EMAIL_HOST_USER", default=""),
             "password": env("EMAIL_HOST_PASSWORD", default=""),
         },
     },
 }
-DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="webmaster@example.com")
+
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@example.com")
 
 STORAGES = {
     "default": {
