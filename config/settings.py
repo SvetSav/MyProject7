@@ -200,8 +200,8 @@ STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
 STRIPE_MOCK = os.environ.get("STRIPE_MOCK", "true").lower() == "true"
 
 # --- Celery ---
-CELERY_BROKER_URL = env("CELERY_BROKER_URL")
-CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND")
+CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://redis:6379/0")
+CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="redis://redis:6379/1")
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
@@ -224,15 +224,16 @@ MAILERS = {
         # "BACKEND": "django.core.mail.backends.smtp.EmailBackend",
         "BACKEND": "django.core.mail.backends.console.EmailBackend",
         "OPTIONS": {
-            "host": env("EMAIL_HOST"),
-            "port": env("EMAIL_PORT"),
-            "use_tls": env("EMAIL_USE_TLS"),
+            "host": env("EMAIL_HOST", default="smtp.yandex.ru"),
+            "port": env.int("EMAIL_PORT", default=465),
+            "use_tls": env.bool("EMAIL_USE_TLS", default=True),
+            "use_ssl": env.bool("EMAIL_USE_SSL", default=False),
             "username": env("EMAIL_HOST_USER"),
-            "password": env("EMAIL_HOST_PASSWORD"),
+            "password": env("EMAIL_HOST_PASSWORD", default=""),
         },
     },
 }
-DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL")
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="webmaster@example.com")
 
 STORAGES = {
     "default": {
